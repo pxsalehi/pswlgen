@@ -41,7 +41,12 @@ object TopologyGenerator {
     val noOfPublishers = 200
     val subSizeList = List(2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000)
     // given each pair of (pub, sub) sizes, generate a file that shows number of subs for each publishers
-    
+    var wload = subCountPerPublisher.take(noOfPublishers)
+    val difference = wload.last._2 - 1
+    wload = wload.map(t => (t._1, math.max(t._2 - difference, 1)))
+    wload.toList.sortBy(_._2).reverse.foreach(println)
+    // transform the sub counts to percentage of total subs
+    //val totalSubs = wload.reduce()
   }
   
   private def generateTopology(size: Int) {
