@@ -1,2 +1,1 @@
-# pswlgen
-Pub/Sub Workload Generator
+# Pub/Sub Workload Generator
