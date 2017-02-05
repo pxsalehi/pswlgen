@@ -31,38 +31,41 @@ object TopologyGenerator {
     println("all users: " + users.size)
     println("subscribers: " + subscribers.size)
     println("publishers: " + publishers.size)
-    val subCountPerPublisher = tlist.groupBy(t => t._2).map(t => (t._1, t._2.size)).toMap
+    val subCountPerPublisher = tlist.groupBy(t => t._2).map(t => (t._1, t._2.size))
     val minSubCount = subCountPerPublisher.values.min
     val maxSubCount = subCountPerPublisher.values.max
     subCountPerPublisher.toList.sortBy(_._2).reverse.foreach(println)
     assert (subCountPerPublisher.keys.size == publishers.size)
     println("Min sub count " + minSubCount)
     println("Max sub count " + maxSubCount)
-    val noOfPublishers = 200
-    val subSizeList = List(2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000)
+    val noOfPublishers = 100
+//    val subSizeList = List(2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000)
     // given each pair of (pub, sub) sizes, generate a file that shows number of subs for each publishers
-    var wload = subCountPerPublisher.take(noOfPublishers)
-    val difference = wload.last._2 - 1
-    wload = wload.map(t => (t._1, math.max(t._2 - difference, 1)))
-    wload.toList.sortBy(_._2).reverse.foreach(println)
+    var wloadSubCounts = subCountPerPublisher.take(noOfPublishers)
+    val difference = wloadSubCounts.last._2 - 1
+    wloadSubCounts = wloadSubCounts.map(t => (t._1, math.max(t._2 - difference, 1)))
+    wloadSubCounts.toList.sortBy(_._2).reverse.foreach(println)
     // transform the sub counts to percentage of total subs
-    //val totalSubs = wload.reduce()
+    val totalSubs: Double = wloadSubCounts.map(t => t._2).reduce(_+_)
+    val wloadSubPercentage = wloadSubCounts.map(t => (t._1, t._2 / totalSubs))
+    println("Popularities:")
+    wloadSubPercentage.toList.sortBy(_._2).reverse.zipWithIndex.map(t => (t._2, t._1._2)).foreach(println)
   }
   
   private def generateTopology(size: Int) {
     println(s"Generating topology of size $size")
     // create adjacency table
-    var all = Array.tabulate(noOfNodes, noOfNodes)((i, j) => -1)
+    val all = Array.tabulate(noOfNodes, noOfNodes)((i, j) => -1)
     for(line <- Source.fromFile(latencyFilename).getLines()) {
       val toks = line.split(" ").map(t => t.toInt)
-      if (toks.size < 3)
+      if (toks.length < 3)
         println("*** Warning: invalid line with less than three tokens! " + line)
       else
         all(toks(0))(toks(1)) = toks(2)/2  // file records are RTT
     }
     // make sure adj table is symmetrical
-    for(i <- 0 to noOfNodes - 1)
-      for(j <- 0 to noOfNodes - 1)
+    for(i <- 0 until noOfNodes)
+      for(j <- 0 until noOfNodes)
         all(i)(j) match {
         case x if x <= 0 => {
           // then (j, i) should be -1 too, if not set (i, j) to (j, i)
@@ -82,7 +85,7 @@ object TopologyGenerator {
 //          all(j)(i) = lat
 //        }
     }
-    for (i <- 0 to noOfNodes - 1)
+    for (i <- 0 until noOfNodes)
       all(i)(i) = 0
     // select a subset of the dataset
     val network = Set[Int]()
@@ -101,7 +104,7 @@ object TopologyGenerator {
         queue.enqueue(getChildren(node, all)
             //.filter(c => all(c).filter(i => i != infinity).size > 1) 
             .toSeq: _*)
-      } while (network.size < size && !queue.isEmpty)
+      } while (network.size < size && queue.nonEmpty)
     } while(network.size < size)
     assert(network.size == size)
     println(root)

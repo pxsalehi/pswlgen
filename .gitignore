@@ -3,3 +3,5 @@ bin
 .cache-main
 .classpath
 .project
+.idea
+pswlgen.iml
