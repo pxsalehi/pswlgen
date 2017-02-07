@@ -5,3 +5,5 @@ bin
 .project
 .idea
 pswlgen.iml
+pops_out
+topo_out

@@ -1,6 +1,6 @@
 import scala.io.Source
 import scala.util.Random
-import scala.collection.mutable._
+import scala.collection._
 import java.nio.file._
 import java.io.BufferedWriter
 
@@ -9,14 +9,16 @@ import java.io.BufferedWriter
   */
 object TopologyGenerator {
   val latencyFilename = "datasets/peerwise-latencies.txt"
+  val outputDir = "topo_out"
   val noOfNodes = 1715
   val INFINITY = Int.MaxValue
   val throughputMin = 120
   val throughputMax = 300
   type Edge = (Int, Int)
+  type Matrix = Array[Array[Int]]
   
-  case class Subgraph(root: Int, adj: Array[Array[Int]]) {
-    def size = adj.size
+  case class Subgraph(root: Int, adj: Matrix) {
+    def size = adj.length
     def vertices = 0.until(size).toSet
     def apply(x: Int) = adj(x)
   }
@@ -31,7 +33,7 @@ object TopologyGenerator {
     println("All done!")
   }
   
-  private def generateTopology(datasetGraph: Array[Array[Int]], size: Int) {
+  private def generateTopology(datasetGraph: Matrix, size: Int) {
     println(s"Generating topology of size $size")
     // create adjacency table
     println("Extracting subgraph...")
@@ -40,23 +42,43 @@ object TopologyGenerator {
     println("Calculating shortest path tree...")
     val pathEdges = findShortestPathTree(graph)
     // generate non-existing latencies using random selection among latencies not existing in the tree
-    //
+    fillInMissingLatencies(graph, datasetGraph)
     // write to file
     val degrees = new Array[Int](size)
     pathEdges.foreach(e => {degrees(e._1) += 1; degrees(e._2) += 1})
     val throughputs = Array.fill(size)(Random.nextInt(throughputMax - throughputMin) + throughputMin)
-    val writer = Files.newBufferedWriter(Paths.get("topology" + size))
-    writer.write(s"No of nodes:$size\n")
-    writer.write(s"No of edges:${pathEdges.size}\n\nNodes:\n")
+    val topoWriter = Files.newBufferedWriter(Paths.get(outputDir, s"topo$size"))
+    topoWriter.write(s"No of nodes:$size\n")
+    topoWriter.write(s"No of edges:${pathEdges.size}\n\nNodes:\n")
     for (v <- graph.vertices.toList.sorted)
-      writer.write(s"$v\t${degrees(v)}\t${throughputs(v)}\n")
-    writer.write("\nEdges:\n")
+      topoWriter.write(s"$v\t${degrees(v)}\t${throughputs(v)}\n")
+    topoWriter.write("\nEdges:\n")
     for((e, i) <- pathEdges.toList.sortBy(_._1).zipWithIndex)
-      writer.write(s"$i\t${e._1}\t${e._2}\t${graph(e._1)(e._2)}\n")
-    writer.close()    
+      topoWriter.write(s"$i\t${e._1}\t${e._2}\t${graph(e._1)(e._2)}\n")
+    topoWriter.close()   
+    val latWriter = Files.newBufferedWriter(Paths.get(outputDir, s"lats$size"))
+    for(i <- 0 until graph.size) {
+      for (j <- 0 until graph.size)
+        latWriter.write(s"${graph(i)(j)}\t")
+      latWriter.write("\n")
+    }
+    latWriter.close()
   }
   
-  private def readGraph(filename: String, noOfNodes: Int): Array[Array[Int]] = {
+  private def fillInMissingLatencies(graph: Subgraph, dataset: Matrix) {
+    // collect latencies not present in graph and more than 1 and less than 100
+    val graphLats = (for {row <- graph.adj; lat <- row; if lat > 0 && lat < 100} yield lat).toSet
+    val latencies = for {row <- dataset
+                         lat <- row
+                         if lat > 1 && lat < INFINITY && !graphLats.contains(lat)
+                    } yield lat
+    for(i <- 0 until graph.size)
+      for (j <- 0 until graph.size)
+        if (graph(i)(j) == INFINITY)
+          graph(i)(j) = latencies(Random.nextInt(latencies.length))
+  }
+  
+  private def readGraph(filename: String, noOfNodes: Int): Matrix = {
     val all = Array.tabulate(noOfNodes, noOfNodes)((i, j) => INFINITY)
     for(line <- Source.fromFile(latencyFilename).getLines()) {
       val toks = line.split(" ").map(t => t.toInt)
@@ -78,10 +100,10 @@ object TopologyGenerator {
     return all
   }
   
-  private def extractSubgraph(graph: Array[Array[Int]], subgraphSize: Int): Subgraph = {
+  private def extractSubgraph(graph: Matrix, subgraphSize: Int): Subgraph = {
     // select a subset of the dataset
-    val network = Set[Int]()
-    val queue = Queue[Int]()
+    val network = mutable.Set[Int]()
+    val queue = mutable.Queue[Int]()
     var root = -1
     do {
       // take a random node as root
@@ -93,8 +115,8 @@ object TopologyGenerator {
       do {
         val node = queue.dequeue
         network += node
-        val children = getChildren(node, graph).filter(c => !network.contains(c))
-        val nonLocalChildren = children.filter(c => graph(node)(c) > 1)
+        val children = getChildren(node, graph).diff(network)
+        val nonLocalChildren = children.filter(graph(node)(_) > 1)
         if (nonLocalChildren.isEmpty) {
           queue.enqueue(children.toSeq: _*)
           println("***** Warning all neighbors are local!")
@@ -108,7 +130,8 @@ object TopologyGenerator {
     // since root is zero, remove root and later add to beginning
     network -= root
     val idMap = (root::network.toList.diff(List(root))).zipWithIndex  // generates (old_id, new_id)
-                    .map(t => t._2 -> t._1).toMap  // creates a map (new_id, old_id)
+                    .map({case (o, n) => (n, o)}).toMap  // creates a map (new_id, old_id)
+//                    .map(t => t._2 -> t._1).toMap  // creates a map (new_id, old_id)
     val adj = Array.tabulate(subgraphSize, subgraphSize)( (i, j) => graph(idMap(i))(idMap(j)) )
     root = 0
     return new Subgraph(root, adj)
@@ -118,7 +141,7 @@ object TopologyGenerator {
     // find shortest path tree from root
     val parent = Array.fill(graph.size)(-1)
     val distance = Array.fill(graph.size)(INFINITY)
-    val visited = Set[Int]()
+    val visited = mutable.Set[Int]()
     distance(graph.root) = 0
     for(i <- 0 until graph.size) {
       // find vertex to add to path with minimum len
@@ -139,9 +162,6 @@ object TopologyGenerator {
         }
     }
     // extract the tree
-//    val pathEdges = Set[Edge]()
-//    for(v <- (1 until graph.size))
-//      pathEdges ++= generateEdges(parent, v)
     val pathEdges = (0 until graph.size).flatMap(v => generateEdges(parent, v)).toSet
     assert(pathEdges.size == graph.size - 1)
     // TODO: check tree is connected
@@ -152,7 +172,7 @@ object TopologyGenerator {
   private def generateEdges(parent: Array[Int], v: Int): Set[Edge] = {
     var p = parent(v)
     var c = v
-    val pathes = Set[Edge]()
+    val pathes = mutable.Set[Edge]()
     while(p != -1) {
       pathes += ((c, p))
       c = p
@@ -161,7 +181,7 @@ object TopologyGenerator {
     return pathes
   }
   
-  private def getChildren(node: Int, adj: Array[Array[Int]]): collection.immutable.Set[Int] = {
+  private def getChildren(node: Int, adj: Matrix): collection.immutable.Set[Int] = {
     adj(node).zipWithIndex.filter(t => t._1 != INFINITY).map(t => t._2).toSet
   }
   
