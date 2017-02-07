@@ -45,7 +45,8 @@ object ExtractPopularity {
     // transform the sub counts to percentage of total subs
     val totalSubs: Double = wloadSubCounts.values.sum
     val wloadSubPercentage = wloadSubCounts.map(t => (t._1, t._2 / totalSubs))
-    val wloadToWrite = wloadSubPercentage.toList.sortBy(_._2).reverse.zipWithIndex.map(t => (t._2, t._1._2))
+    val wloadToWrite = wloadSubPercentage.toList.sortBy(_._2).reverse.zipWithIndex
+        .map({case ((pub, subCount), index) => (index, subCount)})
     val writer = Files.newBufferedWriter(Paths.get(outputFile))
     for((publisher, popularity) <- wloadToWrite) writer.write(s"$publisher $popularity\n")
     writer.close()
