@@ -9,6 +9,7 @@ import java.io.BufferedWriter
   */
 object TopologyGenerator {
   val latencyFilename = "datasets/peerwise-latencies.txt"
+  val throughputFilename = "datasets/throughputs"
   val outputDir = "topo_out"
   val noOfNodes = 1715
   val INFINITY = Int.MaxValue
@@ -46,7 +47,9 @@ object TopologyGenerator {
     // write to file
     val degrees = new Array[Int](size)
     pathEdges.foreach(e => {degrees(e._1) += 1; degrees(e._2) += 1})
-    val throughputs = Array.fill(size)(Random.nextInt(throughputMax - throughputMin) + throughputMin)
+    val throughputValues = readThroughputs()
+//    val throughputs = Array.fill(size)(Random.nextInt(throughputMax - throughputMin) + throughputMin)
+    val throughputs = Array.fill(size)(throughputValues(Random.nextInt(throughputValues.size)))
     val topoWriter = Files.newBufferedWriter(Paths.get(outputDir, s"topo$size"))
     topoWriter.write(s"No of nodes:$size\n")
     topoWriter.write(s"No of edges:${pathEdges.size}\n\nNodes:\n")
@@ -76,6 +79,10 @@ object TopologyGenerator {
       for (j <- 0 until graph.size)
         if (graph(i)(j) == INFINITY)
           graph(i)(j) = latencies(Random.nextInt(latencies.length))
+  }
+
+  private def readThroughputs(): List[Int] = {
+    Source.fromFile(throughputFilename).getLines().map(_.toInt).toList
   }
   
   private def readGraph(filename: String, noOfNodes: Int): Matrix = {
