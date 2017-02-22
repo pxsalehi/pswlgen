@@ -3,6 +3,7 @@ import scala.util.Random
 import scala.collection._
 import java.nio.file._
 import java.io.BufferedWriter
+import java.io.File
 
 /**
   * Created by pxsalehi on 31.01.17.
@@ -10,7 +11,9 @@ import java.io.BufferedWriter
 object TopologyGenerator {
   val latencyFilename = "datasets/peerwise-latencies.txt"
   val throughputFilename = "datasets/throughputs"
-  val outputDir = "topo_out"
+  val scaleThroughput = 1.5
+  var outputDir = ""
+  var seed: Long = -1
   val noOfNodes = 1715
   val INFINITY = Int.MaxValue
   val throughputMin = 120
@@ -25,16 +28,21 @@ object TopologyGenerator {
   }
   
   def main(args: Array[String]): Unit = {
+    outputDir = args.head
+    val seeds = args.tail.map(_.toLong).toList
     val sizes = Array(10, 20, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
-    val seed = 276980650
-    Random.setSeed(seed)
     println("Reading dataset...")
     val datasetGraph = readGraph(latencyFilename, noOfNodes)
-    sizes.foreach(generateTopology(datasetGraph, _))
+    for (seed <- seeds) {
+      Random.setSeed(seed)
+      sizes.foreach(generateTopology(datasetGraph, _, seed))
+    }
     println("All done!")
   }
   
-  private def generateTopology(datasetGraph: Matrix, size: Int) {
+  private def generateTopology(datasetGraph: Matrix, size: Int, seed: Long) {
+    val outdir = new File(s"$outputDir/t$seed/$size")
+    outdir.mkdirs()
     println(s"Generating topology of size $size")
     // create adjacency table
     println("Extracting subgraph...")
@@ -50,7 +58,7 @@ object TopologyGenerator {
     val throughputValues = readThroughputs()
 //    val throughputs = Array.fill(size)(Random.nextInt(throughputMax - throughputMin) + throughputMin)
     val throughputs = Array.fill(size)(throughputValues(Random.nextInt(throughputValues.size)))
-    val topoWriter = Files.newBufferedWriter(Paths.get(outputDir, s"topo$size"))
+    val topoWriter = Files.newBufferedWriter(Paths.get(outdir.toString, "topology.txt"))
     topoWriter.write(s"No of nodes:$size\n")
     topoWriter.write(s"No of edges:${pathEdges.size}\n\nNodes:\n")
     for (v <- graph.vertices.toList.sorted)
@@ -59,7 +67,7 @@ object TopologyGenerator {
     for((e, i) <- pathEdges.toList.sortBy(_._1).zipWithIndex)
       topoWriter.write(s"$i\t${e._1}\t${e._2}\t${graph(e._1)(e._2)}\n")
     topoWriter.close()   
-    val latWriter = Files.newBufferedWriter(Paths.get(outputDir, s"lats$size"))
+    val latWriter = Files.newBufferedWriter(Paths.get(outdir.toString, "latencies.txt"))
     for(i <- 0 until graph.size) {
       for (j <- 0 until graph.size)
         latWriter.write(s"${graph(i)(j)}\t")
@@ -82,7 +90,11 @@ object TopologyGenerator {
   }
 
   private def readThroughputs(): List[Int] = {
-    Source.fromFile(throughputFilename).getLines().map(_.toInt).toList
+    val tplist = for {
+      line <- Source.fromFile(throughputFilename).getLines()
+      tp = line.toInt * scaleThroughput
+    } yield tp.asInstanceOf[Int]
+    return tplist.toList
   }
   
   private def readGraph(filename: String, noOfNodes: Int): Matrix = {
