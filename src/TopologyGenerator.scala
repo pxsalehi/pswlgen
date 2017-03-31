@@ -1,3 +1,6 @@
+import com.typesafe.config.{Config, ConfigFactory}
+import topology.ConfigKeys
+
 import scala.io.Source
 import scala.util.Random
 import scala.collection._
@@ -28,6 +31,10 @@ object TopologyGenerator {
   }
   
   def main(args: Array[String]): Unit = {
+    val conf = ConfigFactory.parseFile(new File(args(0)))
+    println(conf.getString("dataset"))
+    println(conf.getList(ConfigKeys.TOPOLOGY_SIZE))
+    sys.exit()
     outputDir = args.head
     val seeds = args.tail.map(_.toLong).toList
     val sizes = Array(10, 20, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
