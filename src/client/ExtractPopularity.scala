@@ -1,3 +1,5 @@
+package client
+
 import java.nio.file.{Files, Paths}
 
 import scala.io.Source

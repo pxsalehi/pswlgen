@@ -1,29 +1,26 @@
-import com.typesafe.config.{Config, ConfigFactory}
-import topology.ConfigKeys
+package topology
 
+import java.io.File
+import java.nio.file._
+
+import com.typesafe.config.ConfigFactory
+
+import scala.collection._
 import scala.io.Source
 import scala.util.Random
-import scala.collection._
-import java.nio.file._
-import java.io.BufferedWriter
-import java.io.File
 
 /**
   * Created by pxsalehi on 31.01.17.
   */
 object TopologyGenerator {
-  val latencyFilename = "datasets/peerwise-latencies.txt"
-  val throughputFilename = "datasets/throughputs"
-  val scaleThroughput = 1.5
-  var outputDir = ""
-  var seed: Long = -1
-  val noOfNodes = 1715
-  val INFINITY = Int.MaxValue
-  val throughputMin = 120
-  val throughputMax = 300
+  case class Config(latencyFilename: String, outputDir: String, noOfNodes: Int,
+                    minThroughput: Int, maxThroughput: Int)
+//  val throughputFilename = "datasets/throughputs"
+
   type Edge = (Int, Int)
   type Matrix = Array[Array[Int]]
-  
+  val INFINITY = Int.MaxValue
+
   case class Subgraph(root: Int, adj: Matrix) {
     def size = adj.length
     def vertices = 0.until(size).toSet
@@ -31,29 +28,66 @@ object TopologyGenerator {
   }
   
   def main(args: Array[String]): Unit = {
+    // read config file path and output path from command line
+    if (args.length < 2) {
+      println("topogen config_file_path output_dir")
+      sys.exit()
+    }
     val conf = ConfigFactory.parseFile(new File(args(0)))
-    println(conf.getString("dataset"))
-    println(conf.getList(ConfigKeys.TOPOLOGY_SIZE))
-    sys.exit()
-    outputDir = args.head
-    val seeds = args.tail.map(_.toLong).toList
-    val sizes = Array(10, 20, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
+    val outdir = args(1)
+    // read config
+    val dataset = conf.getString(ConfigKeys.DATASET)
+    val latencyFilename = Datasets.getDatasetFilename(dataset)
+    val noOfNodes = Datasets.getDatasetNoOfNodes(dataset)
+    if (latencyFilename.isEmpty || noOfNodes.isEmpty) {
+      println(s"$dataset does not have a valid filename or node size defined!")
+      sys.exit()
+    }
+    val minThroughput = conf.getInt(ConfigKeys.MIN_THROUGHPUT)
+    val maxThroughput = conf.getInt(ConfigKeys.MAX_THROUGHPUT)
+    if (minThroughput < -1 || maxThroughput < -1) {
+      println("min/max throughput must be -1 or greater than zero!")
+      sys.exit()
+    }
+    // TODO: check max > min when both not -1
+    val config = Config(latencyFilename.get, outdir, noOfNodes.get, minThroughput, maxThroughput)
+    val seeds: List[Long] = conf.getLongList(ConfigKeys.SEED).toArray.toList.asInstanceOf[List[Long]]
+    if (seeds.isEmpty) {
+      println("seed cannot be empty!")
+      sys.exit()
+    }
+    val topoSizes: List[Int] = conf.getIntList(ConfigKeys.TOPOLOGY_SIZE).toArray.toList.asInstanceOf[List[Int]]
+    if (topoSizes.isEmpty) {
+      println("topology size cannot be empty")
+      sys.exit()
+    }
+    for(size <- topoSizes) {
+      if (size <= 0) {
+        println(s"Invalid topology size $size")
+        sys.exit()
+      }
+    }
+    val dir = new File(config.outputDir)
+    if (! dir.exists()) {
+      println(s"$dir dos not exist. Creating $dir...")
+      dir.mkdirs()
+    }
     println("Reading dataset...")
-    val datasetGraph = readGraph(latencyFilename, noOfNodes)
+    val datasetGraph = readGraph(config.latencyFilename, config.noOfNodes)
     for (seed <- seeds) {
       Random.setSeed(seed)
-      sizes.foreach(generateTopology(datasetGraph, _, seed))
+      topoSizes.foreach(generateTopology(datasetGraph, _, seed, config))
     }
     println("All done!")
   }
-  
-  private def generateTopology(datasetGraph: Matrix, size: Int, seed: Long) {
-    val outdir = new File(s"$outputDir/t$seed/$size")
+
+  private def generateTopology(datasetGraph: Matrix, size: Int, seed: Long, config: Config) {
+    val outdir = new File(s"${config.outputDir}/t$seed/$size")
     outdir.mkdirs()
     println(s"Generating topology of size $size")
     // create adjacency table
     println("Extracting subgraph...")
-    val graph = extractSubgraph(datasetGraph, size)
+    val graph = extractSubgraph(datasetGraph, size, config.noOfNodes)
     //graph.adj.deep.mkString.split("Array").foreach(l => println(l.replace(INFINITY.toString, "X")))
     println("Calculating shortest path tree...")
     val pathEdges = findShortestPathTree(graph)
@@ -62,9 +96,7 @@ object TopologyGenerator {
     // write to file
     val degrees = new Array[Int](size)
     pathEdges.foreach(e => {degrees(e._1) += 1; degrees(e._2) += 1})
-    val throughputValues = readThroughputs()
-//    val throughputs = Array.fill(size)(Random.nextInt(throughputMax - throughputMin) + throughputMin)
-    val throughputs = Array.fill(size)(throughputValues(Random.nextInt(throughputValues.size)))
+    val throughputs = getThroughputs(config)
     val topoWriter = Files.newBufferedWriter(Paths.get(outdir.toString, "topology.txt"))
     topoWriter.write(s"No of nodes:$size\n")
     topoWriter.write(s"No of edges:${pathEdges.size}\n\nNodes:\n")
@@ -96,17 +128,23 @@ object TopologyGenerator {
           graph(i)(j) = latencies(Random.nextInt(latencies.length))
   }
 
-  private def readThroughputs(): List[Int] = {
+  private def getThroughputs(config: Config): List[Int] = {
     val tplist = for {
-      line <- Source.fromFile(throughputFilename).getLines()
-      tp = line.toInt * scaleThroughput
-    } yield tp.asInstanceOf[Int]
+      v <- 0 until config.noOfNodes
+      tp = genThroughput(config.minThroughput, config.maxThroughput)
+    } yield tp
     return tplist.toList
   }
+
+  private def genThroughput(min: Int, max: Int): Int =
+    (min, max) match {
+      case (-1, -1) | (-1, _) | (_, -1) => INFINITY
+      case (_, _) => Random.nextInt(max - min) + min
+    }
   
   private def readGraph(filename: String, noOfNodes: Int): Matrix = {
     val all = Array.tabulate(noOfNodes, noOfNodes)((i, j) => INFINITY)
-    for(line <- Source.fromFile(latencyFilename).getLines()) {
+    for(line <- Source.fromFile(filename).getLines()) {
       val toks = line.split(" ").map(t => t.toInt)
       if (toks.length < 3)
         println("*** Warning: invalid line with less than three tokens! " + line)
@@ -126,7 +164,7 @@ object TopologyGenerator {
     return all
   }
   
-  private def extractSubgraph(graph: Matrix, subgraphSize: Int): Subgraph = {
+  private def extractSubgraph(graph: Matrix, subgraphSize: Int, noOfNodes: Int): Subgraph = {
     // select a subset of the dataset
     val network = mutable.Set[Int]()
     val queue = mutable.Queue[Int]()
@@ -210,5 +248,5 @@ object TopologyGenerator {
   private def getChildren(node: Int, adj: Matrix): collection.immutable.Set[Int] = {
     adj(node).zipWithIndex.filter(t => t._1 != INFINITY).map(t => t._2).toSet
   }
-  
+
 }
